@@ -1,4 +1,5 @@
 import random
+import string
 from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
@@ -22,9 +23,41 @@ from fish_speech.datasets.protos.text_data_stream import read_pb_stream
 from fish_speech.text.clean import clean_text
 from fish_speech.utils import RankedLogger
 from fish_speech.utils.braceexpand import braceexpand
+from g2p_en import G2p
+
+g2p = G2p()
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
+
+USE_PHONEME = True
+
+
+def remove_space_around_punctuation(phones):
+    new_phones = []
+    for i in range(len(phones)):
+        if phones[i] in string.punctuation:
+            if len(new_phones) and new_phones[-1] == ' ':
+                del new_phones[-1]
+        elif i > 0 and phones[i - 1] in string.punctuation and phones[i] == ' ':
+            continue
+        new_phones.append(phones[i])
+    return new_phones
+
+
+def g2p_encode(text):
+    elements = [' '] + g2p.phonemes + list(string.punctuation)
+    phones = remove_space_around_punctuation(g2p(text))
+    # codes = [elements.index(p) for p in phones]
+    codes = [elements.index(p) if p in elements else elements.index('.') for p in phones]
+    codes = [c + 32100 for c in codes]  # skip special tokens
+    return codes
+
+
+def g2p_decode(codes):
+    elements = [' '] + g2p.phonemes + list(string.punctuation)
+    codes = [c - 32100 for c in codes if c >= 32100]
+    return ' '.join(['|' if elements[c] == ' ' else elements[c] for c in codes])
 
 def split_by_rank_worker(files):
     # We need to know the total number of devices
@@ -154,12 +187,15 @@ class AutoTextSemanticInstructionDataset(IterableDataset):
 
     def tokenize_sentence(self, sentence: str):
         sentence = clean_text(sentence)
-        tokens = self.tokenizer.encode(
-            f"{sentence}",
-            max_length=10**6,
-            add_special_tokens=False,
-            truncation=False,
-        )
+        if USE_PHONEME:
+            tokens = g2p_encode(sentence)
+        else:
+            tokens = self.tokenizer.encode(
+                f"{sentence}",
+                max_length=10**6,
+                add_special_tokens=False,
+                truncation=False,
+            )
         return sentence, len(tokens)
 
     def sample_data(self):
@@ -280,15 +316,35 @@ class AutoTextSemanticInstructionDataset(IterableDataset):
         if skip_text:
             cated_sentences = "<|skip_text|>"
 
-        final_text = "<|im_start|>user\n" + cated_sentences + "<|im_end|>"
-        final_text = final_text + f"<|im_start|>{speaker}\n"
+        if USE_PHONEME:
+            # user and assistant token id is larger than all phones and punctuations.
+            prefix_text = "<|im_start|>user\n"
+            suffix_text = f"<|im_end|><|im_start|>{speaker}\n"
+            prefix_tokens = self.tokenizer.encode(
+                prefix_text,
+                add_special_tokens=False,
+                truncation=False,
+                max_length=10 ** 6,
+            )
+            g2p_tokens = g2p_encode(cated_sentences)
+            suffix_tokens = self.tokenizer.encode(
+                suffix_text,
+                add_special_tokens=False,
+                truncation=False,
+                max_length=10 ** 6,
+            )
+            encoded = prefix_tokens + g2p_tokens + suffix_tokens
+        else:
+            final_text = "<|im_start|>user\n" + cated_sentences + "<|im_end|>"
+            final_text = final_text + f"<|im_start|>{speaker}\n"
 
-        encoded = self.tokenizer.encode(
-            final_text,
-            add_special_tokens=False,
-            truncation=False,
-            max_length=10**6,
-        )
+            encoded = self.tokenizer.encode(
+                final_text,
+                add_special_tokens=False,
+                truncation=False,
+                max_length=10**6,
+            )
+
         semantic_length = sum([len(i[0].values) for i in semantics])
         prompt_length = len(encoded)
         num_codebooks = (

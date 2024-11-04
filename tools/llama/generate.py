@@ -20,6 +20,7 @@ from transformers import AutoTokenizer
 from fish_speech.conversation import CODEBOOK_PAD_TOKEN_ID
 from fish_speech.models.text2semantic.llama import BaseModelArgs
 from fish_speech.text import clean_text, split_text
+from fish_speech.datasets.semantic import USE_PHONEME, g2p_encode
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 torch._inductor.config.coordinate_descent_tuning = True
@@ -602,14 +603,32 @@ def encode_tokens(
     num_codebooks=4,
 ):
     string = clean_text(string)
-    string = f"<|im_start|>user\n{string}<|im_end|><|im_start|>assistant\n"
+    if USE_PHONEME:
+        prefix_text = "<|im_start|>user\n"
+        suffix_text = f"<|im_end|><|im_start|>assistant\n"
+        prefix_tokens = tokenizer.encode(
+            prefix_text,
+            add_special_tokens=False,
+            truncation=False,
+            max_length=10 ** 6,
+        )
+        g2p_tokens = g2p_encode(string)
+        suffix_tokens = tokenizer.encode(
+            suffix_text,
+            add_special_tokens=False,
+            truncation=False,
+            max_length=10 ** 6,
+        )
+        new_tokens = prefix_tokens + g2p_tokens + suffix_tokens
+    else:
+        string = f"<|im_start|>user\n{string}<|im_end|><|im_start|>assistant\n"
 
-    new_tokens = tokenizer.encode(
-        string,
-        add_special_tokens=False,
-        max_length=10**6,
-        truncation=False,
-    )
+        new_tokens = tokenizer.encode(
+            string,
+            add_special_tokens=False,
+            max_length=10**6,
+            truncation=False,
+        )
     tokens = torch.tensor([new_tokens], dtype=torch.int, device=device)
 
     # Codebooks
