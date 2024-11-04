@@ -105,6 +105,18 @@ class TextToSemantic(L.LightningModule):
         else:
             return (per_token_logps * loss_mask).sum(-1)
 
+    def _span_dropout(self, inputs, attention_masks, r=0.1, span=36):
+        # brought the idea from dropblock https://github.com/miguelvr/dropblock/blob/master/dropblock/dropblock.py
+        gamma = r / span
+        # random must be float.
+        span_mask = (torch.rand(attention_masks.shape, device=inputs.device, dtype=torch.float) < gamma).float()
+        span_mask = F.max_pool1d(span_mask.unsqueeze(1), kernel_size=span, stride=1, padding=span//2).squeeze(1)
+        if span % 2 == 0:
+            span_mask = span_mask[..., :-1]
+        is_semantic = inputs[:, 0] == self.model.semantic_token_id
+        span_mask = torch.logical_and(span_mask, is_semantic)
+        return span_mask
+
     def _step(self, batch, batch_idx, stage: str):
         is_train = stage == "train"
 
@@ -115,8 +127,17 @@ class TextToSemantic(L.LightningModule):
 
         # Do positive and negative samples in the same batch to speed up training
         labels = batch["labels"]
+        if is_train and torch.rand(size=()) < 0.5:
+            # apply span dropout with probability 0.5
+            span_mask = self._span_dropout(batch['inputs'], batch["attention_masks"])
+            inputs = batch["inputs"].clone()
+            # the last token is not used.
+            inputs[:, 1:] = torch.where(
+                span_mask.unsqueeze(1), torch.ones_like(inputs[:, 1:]) * (self.model.config.codebook_size - 1), inputs[:, 1:])
+        else:
+            inputs = batch["inputs"]
         outputs = self.model(
-            inp=batch["inputs"],
+            inp=inputs,
             key_padding_mask=batch["attention_masks"],
         )
         token_logits = outputs.token_logits

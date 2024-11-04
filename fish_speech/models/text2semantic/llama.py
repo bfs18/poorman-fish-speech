@@ -21,6 +21,9 @@ from fish_speech.utils import RankedLogger
 
 from .lora import LoraConfig, setup_lora
 
+
+torch._dynamo.config.optimize_ddp = False
+
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
@@ -28,6 +31,15 @@ def find_multiple(n: int, k: int) -> int:
     if n % k == 0:
         return n
     return n + k - (n % k)
+
+
+def get_module_name(model, module):
+    module_name = None
+    for name, m in model.named_modules():
+        if module is m:
+            module_name = name
+            break
+    return module_name
 
 
 @dataclass
@@ -169,6 +181,7 @@ class BaseTransformer(nn.Module):
         super().__init__()
         self.config = config
         self.tokenizer = tokenizer
+        self.emb_scale = math.sqrt(self.config.dim)
 
         self.semantic_token_id = tokenizer.convert_tokens_to_ids(SEMANTIC_TOKEN)
 
@@ -242,9 +255,9 @@ class BaseTransformer(nn.Module):
             )
 
     def embed(self, x: Tensor) -> Tensor:
-        vocab_embeds = [self.embeddings(x[:, 0])]
+        vocab_embeds = [self.embeddings(x[:, 0]) * self.emb_scale]
         for i in range(self.config.num_codebooks):
-            emb = self.codebook_embeddings(x[:, i + 1] + i * self.config.codebook_size)
+            emb = self.codebook_embeddings(x[:, i + 1] + i * self.config.codebook_size) * self.emb_scale
             emb[x[:, 0] != self.semantic_token_id] = 0
             vocab_embeds.append(emb)
 
@@ -331,7 +344,8 @@ class BaseTransformer(nn.Module):
         )
 
     def _init_weights(self, module):
-        std = self.config.initializer_range
+        # std = self.config.initializer_range
+        std = math.sqrt(2 / (5 * self.config.dim))
         if isinstance(module, nn.Linear):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.bias is not None:
@@ -340,6 +354,9 @@ class BaseTransformer(nn.Module):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        module_name = get_module_name(self, module)
+        if module_name.endswith('w3') or module_name.endswith('wo'):
+            module.weight.data.normal_(mean=0.0, std=std / math.sqrt(2 * self.config.n_layer))
 
     @staticmethod
     def from_pretrained(
@@ -543,6 +560,13 @@ class DualARTransformer(BaseTransformer):
         )
         self.apply(self._init_weights)
 
+    def _init_weights(self, module):
+        super()._init_weights(module)
+        std = math.sqrt(2 / (5 * self.config.dim))
+        module_name = get_module_name(self, module)
+        if 'fast' in module_name and (module_name.endswith('w3') or module_name.endswith('wo')):
+            module.weight.data.normal_(mean=0.0, std=std / math.sqrt(2 * self.config.n_fast_layer))
+
     def setup_caches(
         self, max_batch_size: int, max_seq_len: int, dtype: torch.dtype = torch.bfloat16
     ):
@@ -561,6 +585,14 @@ class DualARTransformer(BaseTransformer):
                 dtype=dtype,
             )
 
+    def random_drop(self, codebooks, r=0.2):
+        masked = torch.rand(codebooks.size(), dtype=torch.float32, device=codebooks.device) < r
+        masked = torch.logical_and(masked, codebooks.sum(1, keepdim=True) != 0)
+        masked_codebooks = torch.where(
+            masked, torch.full_like(codebooks, self.config.codebook_size - 2), codebooks)
+        return masked_codebooks
+
+    @torch.compile
     def forward(
         self,
         inp: Tensor,
@@ -579,8 +611,10 @@ class DualARTransformer(BaseTransformer):
 
         # Drop the last token and rotate left
         codebooks = inp[:, 1:-1, 1:]
+        if self.training and torch.rand(size=()) < 0.5:
+            codebooks = self.random_drop(codebooks, r=0.33)
         codebooks = F.pad(codebooks, (0, 1), value=0)
-        codebook_embeddings = self.fast_embeddings(codebooks)
+        codebook_embeddings = self.fast_embeddings(codebooks) * self.emb_scale
         x = torch.cat([x[:, None], codebook_embeddings], dim=1)
         b, s = x.size(0), x.size(2)
         x = rearrange(x, "b n s d -> (b s) n d")  # flatten the batch and seq_len

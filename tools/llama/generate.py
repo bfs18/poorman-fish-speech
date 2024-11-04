@@ -285,7 +285,7 @@ def decode_one_token_ar(
             ),
             **sampling_kwargs,
         )[0]
-        x = model.fast_embeddings(a)
+        x = model.fast_embeddings(a) * model.emb_scale
         codebooks.append(a)
 
     codebooks = torch.stack(codebooks, dim=0)
