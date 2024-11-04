@@ -2,7 +2,7 @@ defaults:
   - base
   - _self_
 
-project: text2semantic_finetune_dual_ar
+project: text2semantic-train_small
 max_length: 2048
 pretrained_ckpt_path: checkpoints/fish-speech-1.4-small
 

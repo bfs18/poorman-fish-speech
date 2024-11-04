@@ -1,4 +1,30 @@
 <div align="center">
+
+<h1>Poorman Fish Speech</h1>
+
+### Train a small LM for text-to-speech synthesis in under 24 hours using a GTX 4090 GPU.
+</div>
+
+## Changes
+1. Utilize the small configuration located at checkpoints/fish-speech-1.4-small and fish_speech/configs/text2semantic-train_small.yaml.
+2. Employ phoneme representation as input within fish_speech/datasets/semantic.py.
+3. Implement the span drop technique in fish_speech/models/text2semantic/lit_module.py [1].
+4. Incorporate random drop codes during the fast transformer training in fish_speech/models/text2semantic/llama.py.
+5. Initialize model weights to loss spike within fish_speech/models/text2semantic/llama.py [2].
+
+[1] He Bai, Tatiana Likhomanenko, Ruixiang Zhang, Zijin Gu, Zakaria Aldeneh, Navdeep Jaitly:
+dMel: Speech Tokenization made Simple.
+
+[2] Sho Takase, Shun Kiyono, Sosuke Kobayashi, Jun Suzuki:
+Spike No More: Stabilizing the Pre-training of Large Language Models.
+
+## Train
+`python fish_speech/train.py --config-name text2semantic-train_small.yaml`
+
+
+---
+
+<div align="center">
 <h1>Fish Speech</h1>
 
 **English** | [简体中文](docs/README.zh.md) | [Portuguese](docs/README.pt-BR.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md) <br>
