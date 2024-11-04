@@ -2,7 +2,7 @@
 
 <h1>Poorman Fish Speech</h1>
 
-### Train a small LM for text-to-speech synthesis in under 24 hours using a GTX 4090 GPU.
+### Train a small LM for TTS in under 24 hours using a GTX 4090 GPU.
 </div>
 
 ## Changes
@@ -10,7 +10,7 @@
 2. Employ phoneme representation as input within fish_speech/datasets/semantic.py.
 3. Implement the span drop technique in fish_speech/models/text2semantic/lit_module.py [1].
 4. Incorporate random drop codes during the fast transformer training in fish_speech/models/text2semantic/llama.py.
-5. Initialize model weights to loss spike within fish_speech/models/text2semantic/llama.py [2].
+5. Initialize model weights to avoid loss spike within fish_speech/models/text2semantic/llama.py [2].
 
 [1] He Bai, Tatiana Likhomanenko, Ruixiang Zhang, Zijin Gu, Zakaria Aldeneh, Navdeep Jaitly:
 dMel: Speech Tokenization made Simple.
